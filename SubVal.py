@@ -5,11 +5,10 @@ class SubVal(sublime_plugin.EventListener):
     def on_post_save(self, view):
         self.view = view
         if self.is_subtitle_file():
-            self.set_file_contents()
-            self.set_timing_pattern()
-            self.set_timing_errors()
-            self.set_error_messages()
-            self.show_errors()
+            self.timing_pattern = self.get_timing_pattern()
+            self.error_messages = self.get_error_messages()
+            file_contents = self.get_file_contents()
+            self.show_errors(self.get_timing_errors_with_loc(file_contents))
 
     def is_subtitle_file(self):
         file_extension = self.get_file_extension()
@@ -21,36 +20,41 @@ class SubVal(sublime_plugin.EventListener):
         file_extension = file_name[starting_index + 1:].lower()
         return file_extension
 
-    def set_file_contents(self):
-        self.file_contents = self.view.substr(
+    def get_file_contents(self):
+        return self.view.substr(
             sublime.Region(0, self.view.size()))
 
-    def set_timing_pattern(self):
-        self.timing_pattern = re.compile('((\d+:?)+,\d+) --> ((\d+:?)+,\d+)')
+    def get_timing_pattern(self):
+        return re.compile('((\d+:?)+,\d+) --> ((\d+:?)+,\d+)')
 
-    def set_timing_errors(self):
-        self.timing_errors = []
-        timing_matches = self.get_timing_matches()
-        previous_timing_match = None
+    def get_timing_errors_with_loc(self, file_contents):
+        timing_errors_with_loc = []
+        timing_matches = self.get_timing_matches(file_contents)
+        prev_timing_match = None
 
-        for current_timing_match in timing_matches:
-
-            if previous_timing_match == None:
-                previous_timing_match = current_timing_match
+        for curr_timing_match in timing_matches:
+            if prev_timing_match == None:
+                prev_timing_match = curr_timing_match
                 continue
+            self.add_timing_error_with_loc(prev_timing_match,
+                curr_timing_match, file_contents, timing_errors_with_loc)
+            prev_timing_match = curr_timing_match
 
-            timing_error = self.get_timing_error(
-                previous_timing_match, current_timing_match)
-            if timing_error != 0:
-                timing_error_loc = self.get_erroneous_timing_loc(
-                    current_timing_match)
-                self.timing_errors.append(
-                    [timing_error, timing_error_loc[0], timing_error_loc[1]])
+        return timing_errors_with_loc
 
-            previous_timing_match = current_timing_match
+    def get_timing_matches(self, file_contents):
+        return re.finditer(self.timing_pattern, file_contents)
 
-    def get_timing_matches(self):
-        return re.finditer(self.timing_pattern, self.file_contents)
+    def add_timing_error_with_loc(self, prev_timing_match, curr_timing_match,
+        file_contents, timing_errors_with_loc):
+        timing_error = self.get_timing_error(
+            prev_timing_match, curr_timing_match)
+
+        if timing_error != 0:
+            timing_error_loc = self.get_erroneous_timing_loc(
+                curr_timing_match, file_contents)
+            timing_errors_with_loc.append(
+                [timing_error, timing_error_loc[0], timing_error_loc[1]])
 
     def get_timing_error(self, prev_timing, curr_timing):
         timings = self.seperate_timings(prev_timing, curr_timing)
@@ -84,21 +88,21 @@ class SubVal(sublime_plugin.EventListener):
     def time_to_numerical(self, time):
         return float(time.replace(':', '').replace(',', '.'))
 
-    def get_erroneous_timing_loc(self, timing_match):
+    def get_erroneous_timing_loc(self, timing_match, file_contents):
         line_number = self.view.rowcol(
-            self.file_contents.index(timing_match.group(0)))[0] + 1
-        character_index = self.file_contents.index(timing_match.group(0))
+            file_contents.index(timing_match.group(0)))[0] + 1
+        character_index = file_contents.index(timing_match.group(0))
         return (line_number, character_index)
 
-    def set_error_messages(self):
-        self.error_messages = {
+    def get_error_messages(self):
+        return {
             1: 'Current subtitle starts after it ends at line {}',
             2: 'Previous subtitle ends after current one starts at line {}',
             3: 'Previous subtitle starts after it ends at line {}'}
 
-    def show_errors(self):
-        if len(self.timing_errors) > 0:
-            for e in self.timing_errors:
+    def show_errors(self, errors):
+        if len(errors) > 0:
+            for e in errors:
                 sublime.error_message(
                     self.error_messages.get(e[0]).format(e[1]))
                 self.go_to_loc(e[2])
